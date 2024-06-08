@@ -128,7 +128,7 @@ class SleepAsAndroidSensor(RestoreSensor):
 
         Should remove device here
         """
-        # ToDo: should we remove device?
+        # TODO: should we remove device?
         pass
 
     def process_message(self, msg):
@@ -200,6 +200,170 @@ class SleepAsAndroidSensor(RestoreSensor):
         }
         return info
 
+    def _fire_event(self, event_payload: str):
+        """Fire event with payload {'event': event_payload}.
+
+        :param event_payload: payload for event
+        """
+        payload = {"event": event_payload}
+        _LOGGER.debug("Firing '%s' with payload: '%s'", self.name, payload)
+        self.hass.bus.fire(self.name, payload)
+
+    def _fire_trigger(self, new_state: str):
+        """Fire trigger based on new state.
+
+        :param new_state: type of trigger to fire
+        """
+        if new_state in TRIGGERS:
+            self.hass.bus.async_fire(
+                DOMAIN + "_event", {"device_id": self.device_id, "type": new_state}
+            )
+        else:
+            _LOGGER.warning(
+                "Got %s event, but it is not in TRIGGERS list: will not fire this event for "
+                "trigger!",
+                new_state,
+            )
+
+    def _set_attributes(self, payload: dict):
+        new_attributes = {}
+        for k, v in self.__additional_attributes.items():
+            new_attributes[v] = payload.get(k, STATE_UNAVAILABLE)
+        _LOGGER.debug(f"New attributes is {new_attributes}")
+        return self._attr_extra_state_attributes.update(new_attributes)
+
+
+class sleepTrackingSensor(RestoreSensor):
+    _attr_icon = "mdi:sleep"
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [
+        STATE_UNKNOWN,
+        "STARTED",
+        "STOPPED",
+        "PAUSED",
+        "RESUMED"
+    ]
+    _attr_translation_key = "sleep_as_android_sleep_status"
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str):
+        """Initialize entry."""
+        self._instance: SleepAsAndroidInstance = hass.data[DOMAIN][
+            config_entry.entry_id
+        ]
+        
+        self.hass: HomeAssistant = hass
+        self._name: str = name
+        self._attr_native_value: str = STATE_UNKNOWN
+        self._device_id: str = "unknown"
+        self._attr_extra_state_attributes = {}
+        self._set_attributes(
+            {}
+        )
+        _LOGGER.debug(f"Creating sensor with name {name}")
+        
+    async def async_added_to_hass(self):
+        
+        await super().async_added_to_hass()
+        device_registry = dr.async_get(self.hass)
+        device = device_registry.async_get_device(
+            identifiers=self.device_info["identifiers"], connections=set()
+        )
+        _LOGGER.debug("My device id is %s", device.id)
+        self._device_id = device.id
+        if (old_state := await self.async_get_last_sensor_data()) is not None:
+            self._attr_native_value = old_state.native_value
+            if self._attr_native_value.lower() == STATE_UNKNOWN.lower():
+                _LOGGER.debug(
+                    f"Got {self._attr_native_value=}. Will use {STATE_UNKNOWN=} instead"
+                )
+                self._attr_native_value = STATE_UNKNOWN
+            _LOGGER.debug(
+                f"async_added_to_hass: restored previous state for {self.name}: "
+                f"{self.state=}, {self.native_value=}."
+            )
+        else:
+            # No previous state. It is fine, but it would be nice to report
+            _LOGGER.debug(
+                f"async_added_to_hass: no previously saved state for {self.name}"
+            )
+        
+        self.async_write_ha_state()
+        
+    async def async_will_remove_from_hass(self):
+        pass
+    
+    def process_message(self, msg):
+        _LOGGER.debug(f"Processing message {msg}")
+        try:
+            payload = json.loads(msg.payload)
+            try:
+                new_state = payload["event"]
+            except KeyError:
+                new_state = self.state
+                _LOGGER.warning("Got unexpected payload: '%s'", payload)
+
+            event = False
+            if new_state == "sleep_tracking_started":
+                # set state to STARTED
+                new_state = "STARTED"
+                event = True
+            elif new_state == "sleep_tracking_stopped":
+                # set state to STOPPED
+                new_state = "STOPPED"
+                event = True
+            elif new_state == "sleep_tracking_paused":
+                # set state to PAUSED
+                new_state = "PAUSED"
+                event = True
+            elif new_state == "sleep_tracking_resumed":
+                # set state to RESUMED
+                new_state = "RESUMED"
+                event = True
+            
+            if event:
+                self._set_attributes(payload)
+                if self.state != new_state:
+                    self._attr_native_value = new_state
+                    self.async_write_ha_state()
+                else:
+                    _LOGGER.debug(
+                        f"Will not update state because old {self.state=} == {new_state=}"
+                    )
+        except json.decoder.JSONDecodeError:
+            _LOGGER.warning("expected JSON payload. got '%s' instead", msg.payload)
+            
+    @property
+    def name(self):
+        """Return the name of the sensor."""
+        return self._instance.create_entity_id(self._name)
+    
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID."""
+        return self._instance.create_entity_id(self._name)
+    
+    @property
+    def available(self) -> bool:
+        """Is sensor available or not."""
+        return self.native_value != STATE_UNKNOWN
+
+    @property
+    def device_id(self) -> str:
+        """Device identification for sensor."""
+        return self._device_id
+
+    @property
+    def device_info(self):
+        """Device info for sensor."""
+        _LOGGER.debug("My identifiers is %s", {(DOMAIN, self.unique_id)})
+        info = {
+            "identifiers": {(DOMAIN, self.unique_id)},
+            "name": self.name,
+            "manufacturer": "SleepAsAndroid",
+            "model": "MQTT",
+        }
+        return info
+    
     def _fire_event(self, event_payload: str):
         """Fire event with payload {'event': event_payload}.
 
