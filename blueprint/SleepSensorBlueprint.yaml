@@ -127,13 +127,13 @@ blueprint:
         action: {}
     deep_sleep:
       name: deep_sleep
-      description: Fires when Sleep detects you going into deep sleep phase. Warning: This may result in lots of events during the night.
+      description: "Fires when Sleep detects you going into deep sleep phase. Warning: This may result in lots of events during the night."
       default: []
       selector:
         action: {}
     light_sleep:
       name: light_sleep
-      description: Fires when Sleep detects you going into light sleep phase. Warning: This may result in lots of events during the night.
+      description: "Fires when Sleep detects you going into light sleep phase. Warning: This may result in lots of events during the night.""
       default: []
       selector:
         action: {}
